@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Mapeo de la zona</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            padding: 20px;
+        }
+        canvas {
+            border: 2px solid #ccc;
+            cursor: crosshair;
+            margin-top: 10px;
+        }
+        .boton {
+            margin: 10px 5px;
+            padding: 10px 20px;
+            font-size: 16px;
+            border-radius: 10px;
+            border: none;
+            cursor: pointer;
+        }
+        #modificarIF { background-color: #d9534f; color: white; }
+        #modificarIF:hover { background-color: #c9302c; }
+
+        #toggleObstaculos { background-color: #5bc0de; color: white; }
+        #toggleObstaculos.activo { background-color: #0275d8; }
+
+        #borrarObstaculos { background-color: #f0ad4e; color: white; }
+        #borrarObstaculos:hover { background-color: #ec971f; }
+
+        #enviarConfig { background-color: green; color: white; }
+        #enviarConfig:hover { background-color: darkgreen; }
+    </style>
+</head>
+<body>
+
+    <h1>Mapeo de la zona</h1>
+    <p id="estado">Esperando configuración...</p>
+
+    <label for="inputFilas">Filas:</label>
+    <input type="number" id="inputFilas" value="15" min="1" style="width: 60px;">
+    <label for="inputColumnas">Columnas:</label>
+    <input type="number" id="inputColumnas" value="20" min="1" style="width: 60px;">
+
+    <br><br>
+
+    <canvas id="mapa" width="800" height="600"></canvas>
+
+    <br>
+    <button id="modificarIF" class="boton">Modificar puntos I/F</button>
+    <button id="toggleObstaculos" class="boton">Agregar obstáculos</button>
+    <button id="borrarObstaculos" class="boton">Borrar obstáculos</button>
+    <button id="enviarConfig" class="boton">Enviar al servidor</button>
+
+    <script>
+        const canvas = document.getElementById('mapa');
+        const ctx = canvas.getContext('2d');
+        const estadoTexto = document.getElementById('estado');
+        const btnModificarIF = document.getElementById('modificarIF');
+        const btnObstaculos = document.getElementById('toggleObstaculos');
+        const btnBorrarObstaculos = document.getElementById('borrarObstaculos');
+        const btnEnviarConfig = document.getElementById('enviarConfig');
+
+        let puntos = {};
+        let totalFinales = 0;
+        let seleccionados = 0;
+        let fase = 'idle';
+        let modoObstaculo = false;
+
+        let filas = 15, columnas = 20;
+        let celdaAncho = canvas.width / columnas;
+        let celdaAlto = canvas.height / filas;
+
+        function redibujar() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            for (let i = 0; i < filas; i++) {
+                for (let j = 0; j < columnas; j++) {
+                    ctx.strokeStyle = "#ccc";
+                    ctx.strokeRect(j * celdaAncho, i * celdaAlto, celdaAncho, celdaAlto);
+                }
+            }
+
+            for (let clave in puntos) {
+                if (clave === "obstaculos") continue;
+                const p = puntos[clave];
+                pintarCelda(p.fila, p.columna, clave === "I" ? "red" : "blue", clave);
+            }
+
+            if (puntos.obstaculos) {
+                for (let o of puntos.obstaculos) {
+                    pintarCelda(o.fila, o.columna, "black");
+                }
+            }
+        }
+
+        function pintarCelda(fila, columna, color, texto = "") {
+            ctx.fillStyle = color;
+            ctx.fillRect(columna * celdaAncho, fila * celdaAlto, celdaAncho, celdaAlto);
+            ctx.strokeStyle = "#000";
+            ctx.strokeRect(columna * celdaAncho, fila * celdaAlto, celdaAncho, celdaAlto);
+
+            if (texto) {
+                ctx.fillStyle = "white";
+                ctx.font = "14px Arial";
+                ctx.fillText(texto, columna * celdaAncho + 5, fila * celdaAlto + 15);
+            }
+        }
+
+        function enviarPuntosAlServidor() {
+            fetch('/guardar_puntos', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ...puntos,
+                    grid_config: { filas, columnas }
+                })
+            });
+        }
+
+        canvas.addEventListener('click', function(event) {
+            if (fase === 'idle' && !modoObstaculo) return;
+            if (fase === 'completo' && !modoObstaculo) return;
+
+            const rect = canvas.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+
+            const col = Math.floor(x / celdaAncho);
+            const fila = Math.floor(y / celdaAlto);
+
+            if (modoObstaculo) {
+                if (!puntos.obstaculos) puntos.obstaculos = [];
+                puntos.obstaculos.push({ fila, columna: col });
+                redibujar();
+                return;
+            }
+
+            if (fase === 'inicio') {
+                puntos.I = { fila, columna: col };
+                estadoTexto.textContent = `Seleccione los puntos finales (${totalFinales})`;
+                fase = 'finales';
+            } else if (fase === 'finales') {
+                const etiqueta = "F" + (seleccionados + 1);
+                puntos[etiqueta] = { fila, columna: col };
+                seleccionados++;
+                if (seleccionados === totalFinales) {
+                    estadoTexto.textContent = "Todos los puntos seleccionados.";
+                    fase = 'completo';
+                    enviarPuntosAlServidor();
+                } else {
+                    estadoTexto.textContent = `Seleccione punto final ${seleccionados + 1} de ${totalFinales}`;
+                }
+            }
+
+            redibujar();
+        });
+
+        btnModificarIF.addEventListener('click', () => {
+            const obstaculos = puntos.obstaculos || [];
+            puntos = { obstaculos };
+            seleccionados = 0;
+            fase = 'inicio';
+            modoObstaculo = false;
+
+            const f = parseInt(document.getElementById('inputFilas').value);
+            const c = parseInt(document.getElementById('inputColumnas').value);
+
+            if (isNaN(f) || isNaN(c) || f <= 0 || c <= 0) {
+                alert("Debe ingresar valores válidos para filas y columnas.");
+                fase = 'idle';
+                return;
+            }
+
+            filas = f;
+            columnas = c;
+            celdaAncho = canvas.width / columnas;
+            celdaAlto = canvas.height / filas;
+
+            const entrada = prompt("¿Cuántos puntos finales desea ingresar?");
+            const num = parseInt(entrada, 10);
+
+            if (isNaN(num) || num <= 0) {
+                alert("Número inválido.");
+                fase = 'idle';
+                return;
+            }
+
+            totalFinales = num;
+            estadoTexto.textContent = "Seleccione el punto de inicio";
+            redibujar();
+        });
+
+        btnObstaculos.addEventListener('click', () => {
+            modoObstaculo = !modoObstaculo;
+            if (modoObstaculo) {
+                btnObstaculos.textContent = "Finalizar obstáculos";
+                btnObstaculos.classList.add("activo");
+                estadoTexto.textContent = "Modo obstáculos activado.";
+            } else {
+                btnObstaculos.textContent = "Agregar obstáculos";
+                btnObstaculos.classList.remove("activo");
+                estadoTexto.textContent = "Obstáculos finalizados.";
+                enviarPuntosAlServidor();
+            }
+        });
+
+        btnBorrarObstaculos.addEventListener('click', () => {
+            puntos.obstaculos = [];
+            redibujar();
+            enviarPuntosAlServidor();
+            estadoTexto.textContent = "Obstáculos borrados.";
+        });
+
+        btnEnviarConfig.addEventListener('click', () => {
+            fetch('/enviar_config', { method: 'POST' })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.status === "ok") {
+                        alert("Configuración enviada al servidor.");
+                    } else {
+                        alert("Error: " + data.mensaje);
+                    }
+                })
+                .catch(err => {
+                    alert("Fallo la conexión con el servidor.");
+                    console.error(err);
+                });
+        });
+
+        window.onload = () => {
+            fase = 'idle';
+            fetch('/datos')
+                .then(response => response.json())
+                .then(data => {
+                    puntos = data || {};
+                    if (data.grid_config) {
+                        filas = data.grid_config.filas;
+                        columnas = data.grid_config.columnas;
+                        celdaAncho = canvas.width / columnas;
+                        celdaAlto = canvas.height / filas;
+                        document.getElementById('inputFilas').value = filas;
+                        document.getElementById('inputColumnas').value = columnas;
+                    }
+                    redibujar();
+                });
+        };
+    </script>
+</body>
+</html>
+
+

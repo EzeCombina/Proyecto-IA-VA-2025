@@ -1,0 +1,9 @@
+{
+	"folders": [],
+	"settings": {
+		"files.associations": {
+			"esp_system.h": "c",
+			"cstdint": "c"
+		}
+	}
+}
